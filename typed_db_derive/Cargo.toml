@@ -1,0 +1,12 @@
+[package]
+name = "typed_db_derive"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.*", features = ["derive", "parsing"] }
+quote = { version = "1.*", default-features = false }
+proc-macro2 = { version = "1.*", default-features = false }

@@ -1,0 +1,12 @@
+[package]
+name = "typed_db"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.*"
+rusqlite = { version = "0.34.0" }
+typed_db_derive = { path = "./typed_db_derive" }
+
+[dev-dependencies]
+rusqlite = { version = "0.34.0", features = ["chrono"] }
