@@ -1,3 +1,5 @@
+mod default_value_parser;
+mod foreign_key_parser;
 mod structs;
 
 use proc_macro::TokenStream;
@@ -5,7 +7,10 @@ use syn::{DataStruct, Ident, spanned::Spanned};
 
 use structs::*;
 
-#[proc_macro_derive(DbTable, attributes(default, primary_key, unique, composite_key))]
+#[proc_macro_derive(
+    DbTable,
+    attributes(default, primary_key, unique, composite_key, foreign_key)
+)]
 pub fn marshal_derive(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
 

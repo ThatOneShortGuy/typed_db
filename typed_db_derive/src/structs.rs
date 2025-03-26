@@ -1,5 +1,9 @@
-use quote::quote;
-use syn::{Lit, Result, spanned::Spanned};
+use std::collections::HashMap;
+
+use quote::{ToTokens, quote};
+use syn::{Result, spanned::Spanned};
+
+use crate::{default_value_parser::*, foreign_key_parser::ForeignKeyAttr};
 
 pub struct FieldInfo {
     pub visibility: syn::Visibility,
@@ -70,53 +74,8 @@ impl FieldInfo {
         }
         let attr = attrs.into_iter().next();
         let ret = if let Some(attr) = attr {
-            let mut value = String::new();
-            attr.parse_nested_meta(|meta| {
-                // #[default(CURRENT_TIMESTAMP)]
-                if meta.path.is_ident("CURRENT_TIMESTAMP") {
-                    value = "CURRENT_TIMESTAMP".to_string();
-                    return Ok(());
-                }
-                // #[default(CURRENT_DATE)]
-                if meta.path.is_ident("CURRENT_DATE") {
-                    value = "CURRENT_DATE".to_string();
-                    return Ok(());
-                }
-                // #[default(CURRENT_TIME)]
-                if meta.path.is_ident("CURRENT_TIME") {
-                    value = "CURRENT_TIME".to_string();
-                    return Ok(());
-                }
-                // #[default(TRUE)]
-                if meta.path.is_ident("TRUE") {
-                    value = "TRUE".to_string();
-                    return Ok(());
-                }
-                // #[default(FALSE)]
-                if meta.path.is_ident("FALSE") {
-                    value = "FALSE".to_string();
-                    return Ok(());
-                }
-
-                if let Ok(lit) = meta.value()?.parse::<Lit>() {
-                    match lit {
-                        // #[default(numeric-literal)]
-                        Lit::Int(lit_int) => {
-                            value = lit_int.base10_digits().to_string();
-                        }
-                        // #[default("string-literal")]
-                        Lit::Str(lit_str) => {
-                            value = lit_str.value();
-                        }
-                        _ => return Err(meta.error("expected a numeric or string literal")),
-                    };
-                    return Ok(());
-                }
-
-                Err(meta.error("unrecognized default attribute"))
-            })?;
-
-            format!("DEFAULT {value}")
+            let val: DefaultValues = attr.parse_args()?;
+            format!("DEFAULT {val}")
         } else {
             "".to_string()
         };
@@ -132,6 +91,30 @@ impl FieldInfo {
                 .map_or(false, |s| s.ident == "Option"),
             _ => false,
         }
+    }
+
+    fn foreign_key(&self) -> Result<Option<ForeignKeyAttr>> {
+        let foreign_keys = self
+            .attributes
+            .iter()
+            .filter(|attr| attr.path().is_ident("foreign_key"))
+            .collect::<Vec<_>>();
+
+        if foreign_keys.len() > 1 {
+            return Err(syn::Error::new(
+                foreign_keys[1].span(),
+                "Field can only be one foreign key",
+            ));
+        }
+
+        let fk = match foreign_keys.into_iter().next() {
+            None => return Ok(None),
+            Some(fk) => fk,
+        };
+
+        let fk_attr = Some(fk.parse_args()?);
+
+        Ok(fk_attr)
     }
 
     fn column_constraints(&self) -> Result<String> {
@@ -171,6 +154,56 @@ impl TableInfo {
             .collect::<Vec<_>>()
             .join(sep)
     }
+    pub fn builder_name(&self) -> syn::Ident {
+        let name = &self.name;
+        syn::Ident::new((name.to_string() + "Builder").as_str(), name.span())
+    }
+
+    pub fn foreign_keys(&self) -> Result<Vec<String>> {
+        let mut foreign_tables = HashMap::<_, Vec<_>>::new();
+        for f in self.fields.iter() {
+            let fk = match f.foreign_key()? {
+                None => continue,
+                Some(fk) => fk,
+            };
+
+            foreign_tables
+                .entry(fk.table.to_token_stream().to_string())
+                .or_default()
+                .push((f, fk));
+        }
+
+        let out = foreign_tables
+            .into_iter()
+            .map(|(k, v)| {
+                let self_ids = v
+                    .iter()
+                    .map(|fk| fk.0.name.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let foreign_ids = v
+                    .iter()
+                    .map(|fk| fk.1.foreign_field.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let actions = v
+                    .into_iter()
+                    .map(|(_, fk)| {
+                        format!(
+                            "ON UPDATE {} ON DELETE {}",
+                            fk.on_update.to_string(),
+                            fk.on_delete.to_string()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                // let table_name = v[0].1.table;
+
+                format!("FOREIGN KEY ({self_ids}) REFERENCES {k}({foreign_ids}) {actions}",)
+            })
+            .collect::<Vec<_>>();
+        Ok(out)
+    }
 
     pub fn creation_str(&self) -> proc_macro2::TokenStream {
         let data = self
@@ -191,6 +224,11 @@ impl TableInfo {
             .filter(|f| f.is_primary_key())
             .collect::<Vec<_>>();
 
+        let foreign_keys = match self.foreign_keys() {
+            Ok(v) => v,
+            Err(e) => return e.to_compile_error(),
+        };
+
         if primary_keys.len() > 1 {
             return syn::Error::new(
                 self.fields[1].name.span(),
@@ -202,7 +240,7 @@ impl TableInfo {
         if primary_keys.len() > 0 && composite_keys.len() > 0 {
             return syn::Error::new(
                 primary_keys[0].name.span(),
-                "Cannot have both a primary key and composite keys",
+                "Cannot have both a primary key and composite keys, use `#[composite_key]` instead",
             )
             .to_compile_error();
         }
@@ -215,15 +253,17 @@ impl TableInfo {
 
         quote! {
             let mut lines = vec![#(#data),*];
+            let foreign_keys = vec![#(#foreign_keys.to_string()),*];
             if !#composite_keys.is_empty() {
                 lines.push(#composite_keys.to_string());
             }
+            lines.extend(foreign_keys);
             format!(
                 "CREATE TABLE IF NOT EXISTS {} (
     {}
 )",
                 Self::TABLE_NAME,
-                lines.join(",\n    ")
+                lines.join(",\n    "),
             )
         }
     }
@@ -232,7 +272,9 @@ impl TableInfo {
         let name = &self.name;
         let creation_str = self.creation_str();
         let column_names = self.fields_str();
+        let select_where = self.impl_select_where();
         quote! {
+            #[automatically_derived]
             impl DbTable for #name {
                 const TABLE_NAME: &'static str = stringify!(#name);
                 fn create_table_str() -> String {
@@ -241,16 +283,14 @@ impl TableInfo {
                 fn column_names() -> Box<[&'static str]> {
                     Box::new([#(#column_names),*])
                 }
+                #select_where
             }
         }
     }
 
     pub fn impl_builder_str(&self) -> proc_macro2::TokenStream {
         let original_name = &self.name;
-        let name = syn::Ident::new(
-            (original_name.to_string() + "Builder").as_str(),
-            original_name.span(),
-        );
+        let name = self.builder_name();
         let full_types = self.fields.iter().map(|f| {
             let field_name = &f.name;
             let ty = &f.ty;
@@ -261,7 +301,7 @@ impl TableInfo {
             let field_name = &f.name;
             let with_name = syn::Ident::new(&format!("with_{field_name}"), field_name.span());
             let ty = &f.ty;
-            quote! {pub fn #with_name(mut self, #field_name: #ty) -> Self {self.#field_name = Some(#field_name); self}}
+            quote! {#[automatically_derived] pub fn #with_name(mut self, #field_name: impl Into<#ty>) -> Self {self.#field_name = Some(#field_name.into()); self}}
         });
         let build_str = self.fields.iter().map(|f| {
             let fname = &f.name;
@@ -273,16 +313,25 @@ impl TableInfo {
                 }
             }
         });
+        let row_getters = self.fields.iter().enumerate().map(|(i, f)| {
+            let name = &f.name;
+            quote! { #name: row.get(#i)?, }
+        });
 
         quote! {
+            #[automatically_derived]
             #[derive(Debug, Clone)]
             pub struct #name {
                 #(#full_types)*
             }
 
+            #[automatically_derived]
             impl #name {
                 #(#with_fns)*
-                pub fn build(self, conn: &::rusqlite::Connection) -> ::rusqlite::Result<usize> {
+
+                #[automatically_derived]
+                /// Inserts the item into the db without returning the row id. Returns the default `rusqlite` instead
+                pub fn build_raw(self, conn: &::rusqlite::Connection) -> ::rusqlite::Result<usize> {
                     let mut fnames = vec![];
                     let mut values: Vec<Box<dyn rusqlite::ToSql>> = vec![];
 
@@ -299,7 +348,30 @@ impl TableInfo {
                         values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
                     conn.execute(&insert_str, values_refs.as_slice())
                 }
+
+                #[automatically_derived]
+                /// Inserts the row into the database and returns the [ROWID](https://www.sqlite.org/lang_createtable.html#rowid)
+                pub fn build(self, conn: &::rusqlite::Connection) -> ::rusqlite::Result<i64> {
+                    self.build_raw(&conn)?;
+                    Ok(conn.last_insert_rowid())
+                }
+
+                #[automatically_derived]
+                /// Inserts and returns the new object with all data from the db
+                pub fn build_val(self, conn: &::rusqlite::Connection) -> ::rusqlite::Result<#original_name> {
+                    let rowid = self.build(&conn)?;
+                    let sql = format!("SELECT * FROM {} WHERE ROWID = {rowid}", #original_name::TABLE_NAME);
+                    let mut stmt = conn.prepare(&sql)?;
+                    stmt.query_map([], |row| {
+                            Ok(#original_name {
+                                #(#row_getters)*
+                            })
+                        })?
+                        .next()
+                        .unwrap()
+                }
             }
+
         }
     }
 
@@ -311,7 +383,8 @@ impl TableInfo {
         });
 
         quote! {
-            pub fn select(conn: &rusqlite::Connection, where_clause: &str, params: impl rusqlite::Params) -> rusqlite::Result<Box<[Self]>> {
+            #[automatically_derived]
+            fn select(conn: &rusqlite::Connection, where_clause: &str, params: impl rusqlite::Params) -> rusqlite::Result<Box<[Self]>> {
                 let sql = format!("SELECT {} FROM {} {}", #comma_separated_cols, Self::TABLE_NAME, where_clause);
                 let mut stmt = conn.prepare(&sql)?;
                 let iter = stmt.query_map(params, |row| {
@@ -327,21 +400,65 @@ impl TableInfo {
 
     fn impl_table_info_str(&self) -> proc_macro2::TokenStream {
         let name = &self.name;
-        let builder_name = syn::Ident::new((name.to_string() + "Builder").as_str(), name.span());
+        let builder_name = self.builder_name();
         let fields = self.fields.iter().map(|f| {
             let field_name = &f.name;
             quote! {#field_name: None,}
         });
-        let select_where = self.impl_select_where();
 
         quote! {
+            #[automatically_derived]
             impl #name {
                 pub fn new() -> #builder_name {
                     #builder_name {
                         #(#fields)*
                     }
                 }
-                #select_where
+            }
+        }
+    }
+
+    fn impl_table_tests(&self) -> proc_macro2::TokenStream {
+        let name = &self.name;
+        let test_name = syn::Ident::new(&(name.to_string() + "_gen_tests"), name.span());
+
+        let foreign_field_type_inits = self.fields.iter().map(|f| match f.foreign_key() {
+            Ok(fk) => match fk {
+                Some(fk) => {
+                    let ty = fk.table;
+                    quote! { #ty::create_table(&conn)?; }
+                }
+                None => quote! {},
+            },
+            Err(e) => e.into_compile_error(),
+        });
+
+        let build_fields = self.fields.iter().map(|f| {
+            let field_name = &f.name;
+            let with_name = syn::Ident::new(&format!("with_{field_name}"), field_name.span());
+            let ty = &f.ty;
+
+            quote! {.#with_name(<#ty as ::std::default::Default>::default())}
+        });
+
+        quote! {
+            #[cfg(test)]
+            #[automatically_derived]
+            #[allow(non_snake_case)]
+            mod #test_name {
+                use super::*;
+
+                #[test]
+                fn create() -> ::core::result::Result<(), Box<dyn std::error::Error>> {
+                    let conn = ::rusqlite::Connection::open(":memory:")?;
+                    conn.execute("PRAGMA foreign_keys = ON;", [])?;
+                    #(#foreign_field_type_inits)*
+                    #name::create_table(&conn)?;
+                    conn.execute("PRAGMA foreign_keys = OFF;", [])?;
+
+                    #name::new()#(#build_fields)*.build_val(&conn)?;
+                    Ok(())
+                }
             }
         }
     }
@@ -350,10 +467,12 @@ impl TableInfo {
         let dtable_str = self.impl_dtable_str();
         let table_info_str = self.impl_table_info_str();
         let builder_str = self.impl_builder_str();
+        let tests_str = self.impl_table_tests();
         quote! {
             #dtable_str
             #table_info_str
             #builder_str
+            #tests_str
         }
     }
 }
