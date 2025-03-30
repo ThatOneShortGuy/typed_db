@@ -5,6 +5,9 @@ use syn::{
     parse::{Parse, ParseStream},
 };
 
+use crate::structs::TableColonField;
+
+#[derive(Debug, Clone, Copy)]
 pub enum FKAction {
     NoAction,
     Restrict,
@@ -67,23 +70,6 @@ impl Parse for FKAction {
             Err(lookahead.error())
         }
     }
-
-    // fn parse(input: ParseStream) -> Result<Self> {
-    //     // Parse the inside of quotes
-    //     let value = input.parse::<LitStr>()?;
-
-    //     // Parse the inside of quotes.
-    //     let str_value = value.value().to_lowercase();
-
-    //     match str_value.as_str() {
-    //         "no action" => Ok(FKAction::NoAction),
-    //         "restrict" => Ok(FKAction::Restrict),
-    //         "set null" => Ok(FKAction::SetNull),
-    //         "set default" => Ok(FKAction::SetDefault),
-    //         "cascade" => Ok(FKAction::Cascade),
-    //         _ => Err(syn::Error::new(value.span(), "Unknown Action")),
-    //     }
-    // }
 }
 
 impl Display for FKAction {
@@ -99,6 +85,7 @@ impl Display for FKAction {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ForeignKeyAttr {
     pub table: Type,
     pub foreign_field: Ident,
@@ -108,29 +95,10 @@ pub struct ForeignKeyAttr {
 
 impl Parse for ForeignKeyAttr {
     fn parse(input: ParseStream) -> Result<Self> {
-        // Parse entire path: Table::field
-        let full_path: syn::Path = input.parse()?;
-
-        // Split into table and field:
-        let mut segments = full_path.segments.iter().collect::<Vec<_>>();
-
-        if segments.len() < 2 {
-            return Err(syn::Error::new_spanned(
-                full_path,
-                "Expected format `Table::field`",
-            ));
-        }
-
-        let foreign_field = segments.pop().cloned().unwrap().ident;
-
-        let table_path = syn::Path {
-            leading_colon: full_path.leading_colon,
-            segments: segments.into_iter().cloned().collect(),
-        };
-        let table = syn::Type::Path(syn::TypePath {
-            qself: None,
-            path: table_path,
-        });
+        let TableColonField {
+            table,
+            field: foreign_field,
+        } = input.parse()?;
 
         // Parse optional actions.
         let mut on_delete = FKAction::NoAction;
@@ -145,21 +113,10 @@ impl Parse for ForeignKeyAttr {
                 Key::OnDelete => on_delete = input.parse()?,
                 Key::OnUpdate => on_update = input.parse()?,
             }
-
-            // match key.to_string().as_str() {
-            //     "on_delete" => on_delete = value.parse()?,
-            //     "on_update" => on_update = value.parse()?,
-            //     _ => {
-            //         return Err(syn::Error::new_spanned(
-            //             key,
-            //             "unexpected attribute key, expected `on_delete` or `on_update`",
-            //         ));
-            //     }
-            // }
         }
         Ok(Self {
-            table,
-            foreign_field,
+            table: table.into_owned(),
+            foreign_field: foreign_field.into_owned(),
             on_delete,
             on_update,
         })

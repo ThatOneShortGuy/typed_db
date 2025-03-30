@@ -1,18 +1,18 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use quote::{ToTokens, quote};
-use syn::{Result, spanned::Spanned};
+use syn::{Result, parse::Parse, spanned::Spanned};
 
 use crate::{default_value_parser::*, foreign_key_parser::ForeignKeyAttr};
 
-pub struct FieldInfo {
+pub struct TableFieldInfo {
     pub visibility: syn::Visibility,
     pub name: proc_macro2::Ident,
     pub attributes: Vec<syn::Attribute>,
     pub ty: syn::Type,
 }
 
-impl FieldInfo {
+impl TableFieldInfo {
     pub fn as_txt(&self) -> Result<proc_macro2::TokenStream> {
         // SQLite format creation string
         let field_name = &self.name;
@@ -102,7 +102,7 @@ impl FieldInfo {
 
         if foreign_keys.len() > 1 {
             return Err(syn::Error::new(
-                foreign_keys[1].span(),
+                foreign_keys[1].path().span(),
                 "Field can only be one foreign key",
             ));
         }
@@ -135,7 +135,7 @@ impl FieldInfo {
 
 pub struct TableInfo {
     pub name: syn::Ident,
-    pub fields: Vec<FieldInfo>,
+    pub fields: Vec<TableFieldInfo>,
     #[allow(dead_code)]
     pub attributes: Vec<syn::Attribute>,
 }
@@ -173,36 +173,29 @@ impl TableInfo {
                 .push((f, fk));
         }
 
-        let out = foreign_tables
-            .into_iter()
-            .map(|(k, v)| {
-                let self_ids = v
-                    .iter()
-                    .map(|fk| fk.0.name.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                let foreign_ids = v
-                    .iter()
-                    .map(|fk| fk.1.foreign_field.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                let actions = v
-                    .into_iter()
-                    .map(|(_, fk)| {
-                        format!(
-                            "ON UPDATE {} ON DELETE {}",
-                            fk.on_update.to_string(),
-                            fk.on_delete.to_string()
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                // let table_name = v[0].1.table;
+        let mut fk_stings = Vec::new();
+        for f in self.fields.iter() {
+            let fk = match f.foreign_key()? {
+                None => continue,
+                Some(fk) => fk,
+            };
+            let self_id = &f.name;
+            let table_name = fk.table.to_token_stream().to_string();
+            let foreign_id = fk.foreign_field;
+            let on_update = match fk.on_update {
+                crate::foreign_key_parser::FKAction::NoAction => String::new(),
+                other => format!("ON UPDATE {other}"),
+            };
+            let on_delete = match fk.on_delete {
+                crate::foreign_key_parser::FKAction::NoAction => String::new(),
+                other => format!("ON DELETE {other}"),
+            };
+            fk_stings.push(format!(
+                "FOREIGN KEY ({self_id}) REFERENCES {table_name}({foreign_id}) {on_update} {on_delete}",
+            ))
+        }
 
-                format!("FOREIGN KEY ({self_ids}) REFERENCES {k}({foreign_ids}) {actions}",)
-            })
-            .collect::<Vec<_>>();
-        Ok(out)
+        Ok(fk_stings)
     }
 
     pub fn creation_str(&self) -> proc_macro2::TokenStream {
@@ -426,7 +419,12 @@ impl TableInfo {
             Ok(fk) => match fk {
                 Some(fk) => {
                     let ty = fk.table;
-                    quote! { #ty::create_table(&conn)?; }
+                    let check = TableColonField {
+                        table: Cow::Borrowed(&ty),
+                        field: Cow::Borrowed(&fk.foreign_field),
+                    }
+                    .validity_check(&f.ty);
+                    quote! { #check #ty::create_table(&conn)?; }
                 }
                 None => quote! {},
             },
@@ -473,6 +471,54 @@ impl TableInfo {
             #table_info_str
             #builder_str
             #tests_str
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TableColonField<'a> {
+    pub table: Cow<'a, syn::Type>,
+    pub field: Cow<'a, syn::Ident>,
+}
+
+impl<'a> Parse for TableColonField<'a> {
+    fn parse(input: syn::parse::ParseStream) -> Result<Self> {
+        let full_path: syn::Path = input.parse()?;
+
+        // Split into table and field:
+        let mut segments = full_path.segments.iter().collect::<Vec<_>>();
+
+        if segments.len() < 2 {
+            return Err(syn::Error::new_spanned(
+                full_path,
+                "Expected format `Table::field`",
+            ));
+        }
+
+        let field = segments.pop().cloned().unwrap().ident;
+        let field = Cow::Owned(field);
+        let table_path = syn::Path {
+            leading_colon: full_path.leading_colon,
+            segments: segments.into_iter().cloned().collect(),
+        };
+        let table = syn::Type::Path(syn::TypePath {
+            qself: None,
+            path: table_path,
+        });
+        let table = Cow::Owned(table);
+        Ok(Self { table, field })
+    }
+}
+
+impl<'a> TableColonField<'a> {
+    pub fn validity_check(&self, ty: &syn::Type) -> proc_macro2::TokenStream {
+        let table = &self.table;
+        let field = &self.field;
+        quote! {
+            {
+                let x: Option<#table> = None;
+                x.map(|it| Into::<#ty>::into(it.#field))
+            };
         }
     }
 }

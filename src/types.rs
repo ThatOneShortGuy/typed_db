@@ -2,6 +2,7 @@ use chrono::prelude::*;
 
 use crate::DbType;
 
+#[macro_export]
 macro_rules! impl_db_type {
     ($($ty:ty) *, $db_type:expr) => {
         $(

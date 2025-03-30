@@ -1,4 +1,5 @@
 use rusqlite::Result;
+
 pub trait DbTable: Sized {
     const TABLE_NAME: &'static str;
     fn create_table_str() -> String;
@@ -16,4 +17,12 @@ pub trait DbTable: Sized {
 
 pub trait DbType: Default {
     fn db_type() -> &'static str;
+}
+
+pub trait CommonTableExpression: Sized {
+    fn cte_str() -> &'static str;
+    fn select(
+        conn: &rusqlite::Connection,
+        params: impl rusqlite::Params,
+    ) -> rusqlite::Result<Box<[Self]>>;
 }
