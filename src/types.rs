@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+
 use chrono::prelude::*;
 
 use crate::DbType;
@@ -19,7 +21,7 @@ impl_db_type!(i16 u16, "SMALLINT");
 impl_db_type!(i32 u32 isize usize, "INTEGER");
 impl_db_type!(i64, "BIGINT");
 impl_db_type!(u64, "UNSIGNED BIG INT");
-impl_db_type!(&str String std::path::PathBuf, "TEXT");
+impl_db_type!(&str String std::path::PathBuf OsString, "TEXT");
 impl_db_type!(f32, "FLOAT");
 impl_db_type!(f64, "DOUBLE");
 impl_db_type!(bool, "BOOLEAN");

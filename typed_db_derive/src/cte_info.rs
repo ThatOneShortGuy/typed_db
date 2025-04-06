@@ -167,7 +167,7 @@ impl CteInfo {
         quote! {
             impl #name {
                 #[automatically_derived]
-                pub fn print_query_plan(conn: &Connection, params: impl Params) -> Result<(), rusqlite::Error> {
+                pub fn print_query_plan(conn: &rusqlite::Connection, params: impl rusqlite::Params) -> Result<(), rusqlite::Error> {
                     let query_plan_str = format!("EXPLAIN QUERY PLAN {}", Self::cte_str());
                     let mut stmt = conn.prepare(&query_plan_str)?;
                     let rows = stmt.query_map(params, |row| {
