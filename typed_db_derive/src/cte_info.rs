@@ -53,10 +53,10 @@ impl CteFieldInfo {
             val: where_clause,
             table_shorthand,
         } = cte;
+        let table_shorthand = table_shorthand.value();
         let s = format!(
-            "(SELECT {field_name} FROM {} AS {}, params WHERE {}) AS {name}",
+            "(SELECT {table_shorthand}.{field_name} FROM {} AS {table_shorthand}, params WHERE {}) AS {name}",
             table_name.into_token_stream(),
-            table_shorthand.value(),
             where_clause.value()
         );
 
@@ -159,6 +159,47 @@ impl CteInfo {
                     Ok(rows)
                 }
             }
+        }
+    }
+
+    pub fn impl_self(&self) -> proc_macro2::TokenStream {
+        let name = &self.name;
+        quote! {
+            impl #name {
+                #[automatically_derived]
+                pub fn print_query_plan(conn: &Connection, params: impl Params) -> Result<(), rusqlite::Error> {
+                    let query_plan_str = format!("EXPLAIN QUERY PLAN {}", Self::cte_str());
+                    let mut stmt = conn.prepare(&query_plan_str)?;
+                    let rows = stmt.query_map(params, |row| {
+                        Ok((
+                            row.get::<_, i32>(0)?,
+                            row.get::<_, i32>(1)?,
+                            row.get::<_, i32>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    })?;
+                    println!("Query Plan:");
+                    for row in rows {
+                        let (selectid, order, from, detail) = row?;
+                        println!(
+                            "selectid: {}, order: {}, from: {}, detail: {}",
+                            selectid, order, from, detail
+                        );
+                    }
+
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    pub fn impls(&self) -> proc_macro2::TokenStream {
+        let cte_impl = self.impl_cte();
+        let self_impl = self.impl_self();
+
+        quote! {
+            #cte_impl
+            #self_impl
         }
     }
 }

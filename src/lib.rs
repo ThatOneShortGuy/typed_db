@@ -4,7 +4,7 @@ mod types;
 use std::num::ParseIntError;
 
 use chrono::prelude::*;
-use rusqlite::{ToSql, params, types::FromSql};
+use rusqlite::{Connection, Params, ToSql, params, types::FromSql};
 pub use traits::*;
 use typed_db_derive::CommonTableExpression;
 pub use typed_db_derive::DbTable;
@@ -105,10 +105,12 @@ fn t() -> Result<(), Box<dyn std::error::Error>> {
 
     let a = ActiveUser::select(&conn, params![Utc::now(), u1.id])?;
 
-    println!("{}", User::create_table_str());
-    println!("{}", UserRole::create_table_str());
-    println!("{}", UserTeam::create_table_str());
-    // panic!("{a:#?}");
+    // println!("{}", User::create_table_str());
+    // println!("{}", UserRole::create_table_str());
+    // println!("{}", UserTeam::create_table_str());
+    // println!("{}", ActiveUser::cte_str());
+    ActiveUser::print_query_plan(&conn, params![Utc::now(), u1.id])?;
+    panic!("{a:#?}");
 
     Ok(())
 }

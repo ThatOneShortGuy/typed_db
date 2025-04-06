@@ -1,10 +1,10 @@
+mod cte_info;
 mod cte_params;
-mod dbview_info;
 mod default_value_parser;
 mod foreign_key_parser;
 mod structs;
 
-use dbview_info::{CteFieldInfo, CteInfo};
+use cte_info::{CteFieldInfo, CteInfo};
 use proc_macro::TokenStream;
 use syn::{Attribute, DataStruct, Ident, spanned::Spanned};
 
@@ -78,7 +78,7 @@ fn impl_dbview_macro(ast: &syn::DeriveInput) -> TokenStream {
     let attrs = &ast.attrs;
 
     let data = match &ast.data {
-        syn::Data::Struct(data_struct) => cte_struct(data_struct, name, attrs).impl_cte(),
+        syn::Data::Struct(data_struct) => cte_struct(data_struct, name, attrs).impls(),
         syn::Data::Enum(data_enum) => {
             syn::Error::new(data_enum.enum_token.span(), "Enums are not valid DB Views")
                 .into_compile_error()
