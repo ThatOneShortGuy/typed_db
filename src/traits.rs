@@ -1,9 +1,15 @@
-use rusqlite::Result;
+use rusqlite::{OptionalExtension, Result};
 
-pub trait DbTable: Sized {
+pub trait DbTable: Sized + for<'a> TryFrom<&'a rusqlite::Row<'a>>
+where
+    rusqlite::Error: for<'a> From<<Self as TryFrom<&'a rusqlite::Row<'a>>>::Error>,
+{
     const TABLE_NAME: &'static str;
     fn create_table_str() -> String;
     fn column_names() -> Box<[&'static str]>;
+    fn column_getters() -> String {
+        Self::column_names().join(",")
+    }
     fn create_table(conn: &rusqlite::Connection) -> Result<usize> {
         let sql = Self::create_table_str();
         conn.execute(&sql, ())
@@ -12,7 +18,37 @@ pub trait DbTable: Sized {
         conn: &rusqlite::Connection,
         where_clause: &str,
         params: impl rusqlite::Params,
-    ) -> rusqlite::Result<Box<[Self]>>;
+    ) -> rusqlite::Result<Box<[Self]>> {
+        let sql = format!(
+            "SELECT {} FROM {} {}",
+            Self::column_getters(),
+            Self::TABLE_NAME,
+            where_clause
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let iter = stmt
+            .query_map(params, |row| Ok(Self::try_from(row)?))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(iter)
+    }
+
+    fn select_one(
+        conn: &rusqlite::Connection,
+        where_clause: &str,
+        params: impl rusqlite::Params,
+    ) -> rusqlite::Result<Option<Self>> {
+        let sql = format!(
+            "SELECT {} FROM {} {} LIMIT 1",
+            Self::column_getters(),
+            Self::TABLE_NAME,
+            where_clause
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let row = stmt
+            .query_row(params, |row| Ok(Self::try_from(row)?))
+            .optional()?;
+        Ok(row)
+    }
 }
 
 pub trait DbType: Default {

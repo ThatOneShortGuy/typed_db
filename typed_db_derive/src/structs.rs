@@ -306,10 +306,6 @@ impl TableInfo {
                 }
             }
         });
-        let row_getters = self.fields.iter().enumerate().map(|(i, f)| {
-            let name = &f.name;
-            quote! { #name: row.get(#i)?, }
-        });
 
         quote! {
             #[automatically_derived]
@@ -356,9 +352,7 @@ impl TableInfo {
                     let sql = format!("SELECT * FROM {} WHERE ROWID = {rowid}", #original_name::TABLE_NAME);
                     let mut stmt = conn.prepare(&sql)?;
                     stmt.query_map([], |row| {
-                            Ok(#original_name {
-                                #(#row_getters)*
-                            })
+                            Ok(#original_name::try_from(row)?)
                         })?
                         .next()
                         .unwrap()
@@ -370,10 +364,6 @@ impl TableInfo {
 
     fn impl_select_where(&self) -> proc_macro2::TokenStream {
         let comma_separated_cols = self.separated_fields(",");
-        let row_getters = self.fields.iter().enumerate().map(|(i, f)| {
-            let name = &f.name;
-            quote! { #name: row.get(#i)?, }
-        });
 
         quote! {
             #[automatically_derived]
@@ -381,12 +371,30 @@ impl TableInfo {
                 let sql = format!("SELECT {} FROM {} {}", #comma_separated_cols, Self::TABLE_NAME, where_clause);
                 let mut stmt = conn.prepare(&sql)?;
                 let iter = stmt.query_map(params, |row| {
-                    Ok(Self {
-                        #(#row_getters)*
-                    })
+                    Ok(Self::try_from(row)?)
                 })?
                 .collect::<rusqlite::Result<_>>()?;
                 Ok(iter)
+            }
+        }
+    }
+
+    fn impl_try_from_row(&self) -> proc_macro2::TokenStream {
+        let row_getters = self.fields.iter().enumerate().map(|(i, f)| {
+            let name = &f.name;
+            quote! { #name: row.get(#i)?, }
+        });
+        let name = &self.name;
+
+        quote! {
+            impl<'a> TryFrom<&'a ::rusqlite::Row<'a>> for #name {
+                type Error = ::rusqlite::Error;
+
+                fn try_from(row: &::rusqlite::Row<'a>) -> Result<Self, Self::Error> {
+                    Ok(Self {
+                        #(#row_getters)*
+                    })
+                }
             }
         }
     }
@@ -463,11 +471,13 @@ impl TableInfo {
 
     pub fn impls(&self) -> proc_macro2::TokenStream {
         let dtable_str = self.impl_dtable_str();
+        let try_from_row_str = self.impl_try_from_row();
         let table_info_str = self.impl_table_info_str();
         let builder_str = self.impl_builder_str();
         let tests_str = self.impl_table_tests();
         quote! {
             #dtable_str
+            #try_from_row_str
             #table_info_str
             #builder_str
             #tests_str

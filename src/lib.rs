@@ -8,6 +8,7 @@ pub mod prelude {
     pub use crate::traits::*;
     pub use typed_db_derive::*;
 }
+
 #[cfg(test)]
 #[allow(dead_code)]
 mod tests {

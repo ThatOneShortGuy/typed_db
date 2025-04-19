@@ -16,7 +16,11 @@ pub struct UsersTable {
 }
 
 fn create_tables(c: &mut Criterion) {
-    let conn = rusqlite::Connection::open("test.db").unwrap();
+    // const DB_NAME: &str = "test.db";
+    const DB_NAME: &str = ":memory:";
+    let db_path = std::path::PathBuf::from(DB_NAME);
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
     let _ = conn.execute("PRAGMA journal_mode = WAL;", []);
     UsersTable::create_table(&conn).unwrap();
 
@@ -44,7 +48,9 @@ fn create_tables(c: &mut Criterion) {
     });
     conn.close().unwrap();
     // Delete the db file.
-    std::fs::remove_file("test.db").unwrap();
+    if db_path.exists() {
+        std::fs::remove_file(&db_path).unwrap();
+    }
 }
 
 criterion_group!(benches, create_tables);
