@@ -350,7 +350,7 @@ impl TableInfo {
                 pub fn build_val(self, conn: &::rusqlite::Connection) -> ::rusqlite::Result<#original_name> {
                     let rowid = self.build(&conn)?;
                     let sql = format!("SELECT * FROM {} WHERE ROWID = {rowid}", #original_name::TABLE_NAME);
-                    let mut stmt = conn.prepare(&sql)?;
+                    let mut stmt = conn.prepare_cached(&sql)?;
                     stmt.query_map([], |row| {
                             Ok(#original_name::try_from(row)?)
                         })?
@@ -369,7 +369,7 @@ impl TableInfo {
             #[automatically_derived]
             fn select(conn: &rusqlite::Connection, where_clause: &str, params: impl rusqlite::Params) -> rusqlite::Result<Box<[Self]>> {
                 let sql = format!("SELECT {} FROM {} {}", #comma_separated_cols, Self::TABLE_NAME, where_clause);
-                let mut stmt = conn.prepare(&sql)?;
+                let mut stmt = conn.prepare_cached(&sql)?;
                 let iter = stmt.query_map(params, |row| {
                     Ok(Self::try_from(row)?)
                 })?

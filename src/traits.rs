@@ -28,7 +28,7 @@ where
             Self::TABLE_NAME,
             where_clause
         );
-        let mut stmt = conn.prepare(&sql)?;
+        let mut stmt = conn.prepare_cached(&sql)?;
         let iter = stmt
             .query_map(params, |row| Ok(Self::try_from(row)?))?
             .collect::<rusqlite::Result<_>>()?;
@@ -46,7 +46,7 @@ where
             Self::TABLE_NAME,
             where_clause
         );
-        let mut stmt = conn.prepare(&sql)?;
+        let mut stmt = conn.prepare_cached(&sql)?;
         let row = stmt
             .query_row(params, |row| Ok(Self::try_from(row)?))
             .optional()?;
