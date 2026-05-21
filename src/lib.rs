@@ -117,4 +117,16 @@ mod tests {
 
         Ok(())
     }
+
+    mod macro_scope_tests {
+        #[derive(Default)]
+        struct CustomId;
+
+        crate::impl_db_type!(CustomId, "INTEGER");
+
+        #[test]
+        fn impl_db_type_does_not_require_dbtype_import() {
+            assert_eq!(<CustomId as crate::DbType>::db_type(), "INTEGER");
+        }
+    }
 }

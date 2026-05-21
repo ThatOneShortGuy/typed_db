@@ -2,13 +2,11 @@ use std::ffi::OsString;
 
 use chrono::prelude::*;
 
-use crate::DbType;
-
 #[macro_export]
 macro_rules! impl_db_type {
     ($($ty:ty) *, $db_type:expr) => {
         $(
-        impl DbType for $ty {
+        impl $crate::DbType for $ty {
             fn db_type() -> &'static str {
                 $db_type
             }
@@ -29,7 +27,7 @@ impl_db_type!(NaiveDate, "DATE");
 impl_db_type!(NaiveDateTime DateTime<Utc>, "DATETIME");
 impl_db_type!(Vec<u8> &[u8], "BLOB");
 
-impl<T: DbType> DbType for Option<T> {
+impl<T: crate::DbType> crate::DbType for Option<T> {
     fn db_type() -> &'static str {
         T::db_type()
     }
