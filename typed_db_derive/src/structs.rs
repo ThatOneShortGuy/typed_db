@@ -352,7 +352,7 @@ impl TableInfo {
                     let sql = format!("SELECT * FROM {} WHERE ROWID = {rowid}", #original_name::TABLE_NAME);
                     let mut stmt = conn.prepare_cached(&sql)?;
                     stmt.query_map([], |row| {
-                            Ok(#original_name::try_from(row)?)
+                            #original_name::try_from(row)
                         })?
                         .next()
                         .unwrap()
@@ -371,7 +371,7 @@ impl TableInfo {
                 let sql = format!("SELECT {} FROM {} {}", #comma_separated_cols, Self::TABLE_NAME, where_clause);
                 let mut stmt = conn.prepare_cached(&sql)?;
                 let iter = stmt.query_map(params, |row| {
-                    Ok(Self::try_from(row)?)
+                    Self::try_from(row)
                 })?
                 .collect::<rusqlite::Result<_>>()?;
                 Ok(iter)
